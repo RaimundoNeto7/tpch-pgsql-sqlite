@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
+from ast import arg
 import os
 import time
 import argparse
 import getpass
 
-from tpch4pgsql import postgresqldb as pgdb, load, query, prepare as prep, result as r
+from tpch4pgsql import load, query, prepare as prep, result as r
+import tpch4sqlite
 
 # Constants
 
@@ -21,6 +23,7 @@ DEFAULT_QUERY_ROOT = os.path.join(".", "query_root")
 DEFAULT_DBGEN_DIR = os.path.join(".", "tpch-dbgen")
 DEFAULT_SCALE = 1.0
 DEFAULT_NUM_STREAMS = 0
+DEFAULT_ENGINE = "psycopg2"
 
 # other constants
 LOAD_DIR = "load"
@@ -76,9 +79,21 @@ def scale_to_num_streams(scale):
     return num_streams
 
 
+def load_sqlite(query_root, database, data_dir):
+    tpch4sqlite.clean_database(database, TABLES)
+    tpch4sqlite.create_schema(query_root, database, PREP_QUERY_DIR)
+    tpch4sqlite.load_tables(data_dir, database, TABLES, LOAD_DIR)
+    tpch4sqlite.index_tables(query_root, database, PREP_QUERY_DIR)
+
+def query_sqlite3(query_root, data_dir, database, run_timestamp, num_streams, verbose, read_only, scale):
+    tpch4sqlite.run_power_test(query_root, data_dir, UPDATE_DIR, DELETE_DIR, GENERATED_QUERY_DIR, RESULTS_DIR, database, run_timestamp, num_streams, verbose, read_only)
+    tpch4sqlite.run_throughput_test(query_root, data_dir, UPDATE_DIR, DELETE_DIR, GENERATED_QUERY_DIR, RESULTS_DIR, database, run_timestamp, num_streams, verbose, read_only)
+    tpch4sqlite.calc_metrics(RESULTS_DIR, run_timestamp, scale, num_streams)
+
 def main(phase, host, port, user, password, database,
          dbgen_dir, data_dir, query_root,
-         scale, num_streams, verbose, read_only):
+         scale, num_streams, verbose, read_only,
+         engine):
     # TODO: unify doctsring, some is in reStructuredText, some is Google style
     # TODO: finish sphinx integration
     """Runs main code for three different phases.
@@ -118,6 +133,9 @@ def main(phase, host, port, user, password, database,
             exit(1)
         print("created query files in %s" % query_root)
     elif phase == "load":
+        if engine == "sqlite3":
+            load_sqlite(query_root, database, data_dir)
+            return
         result = r.Result("Load")
         if load.clean_database(query_root, host, port, database, user, password, TABLES):
             print("could not clean the database.")
@@ -144,6 +162,9 @@ def main(phase, host, port, user, password, database,
         result.printMetrics()
         result.saveMetrics(RESULTS_DIR, run_timestamp, "load")
     elif phase == "query":
+        if engine == "sqlite3":
+            query_sqlite3(query_root, data_dir, database, run_timestamp, num_streams, verbose, read_only, scale)
+            return
         if query.run_power_test(query_root, data_dir, UPDATE_DIR, DELETE_DIR, GENERATED_QUERY_DIR, RESULTS_DIR,
                                 host, port, database, user, password,
                                 run_timestamp, num_streams, verbose, read_only):
@@ -187,6 +208,7 @@ if __name__ == "__main__":
                              ", i.e. based on scale factor SF")
     parser.add_argument("-b", "--verbose", action="store_true",
                         help="Print more information to standard output")
+    parser.add_argument("-e", "--engine", default=DEFAULT_ENGINE)
     parser.add_argument("-r", "--read-only", action="store_true",
                         help="Do not execute refresh functions during the query phase, " +
                              "which allows for running it repeatedly")
@@ -206,10 +228,11 @@ if __name__ == "__main__":
     password = args.password
     verbose = args.verbose
     read_only = args.read_only
+    engine = args.engine
 
     # if no num_streams was provided, then calculate default based on scale factor
     if num_streams == 0:
         num_streams = scale_to_num_streams(scale)
 
     # main
-    main(phase, host, port, user, password, database, dbgen_dir, data_dir, query_root, scale, num_streams, verbose, read_only)
+    main(phase, host, port, user, password, database, dbgen_dir, data_dir, query_root, scale, num_streams, verbose, read_only, engine)

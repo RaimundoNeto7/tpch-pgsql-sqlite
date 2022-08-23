@@ -60,3 +60,6 @@ perf_query_gen/
 tpch-dbgen/
 tags
 results/
+.venv/
+**/*.pyc
+.vscode/
